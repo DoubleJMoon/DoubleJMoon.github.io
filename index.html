@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<link rel="stylesheet" type="text/css" href="style.css">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>랜덤 선택기</title>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h1>🎰 랜덤 선택기</h1>
+      <div class="file-name" id="fileCount">(카드 없음)</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <label class="file-btn">📂 파일 불러오기
+        <input id="fileInput" type="file" accept=".txt" multiple>
+      </label>
+      <button id="addCardBtn">➕ 새 카드 추가</button>
+      <button id="runAllBtn">🎰 모두 추첨</button>
+      <!-- <button id="rerunAllBtn" class="smallGhost">🔁 한번에 돌리기</button> -->
+      <button id="themeToggle" class="smallGhost">🌗 테마</button>
+    </div>
+  </div>
+
+  <div class="controls" style="margin-top:10px">
+    <div style="font-size:13px;color:var(--muted)">※ 각 카드의 제목과 항목은 직접 수정 가능합니다.</div>
+  </div>
+
+  <div id="fileList" class="file-list"></div>
+
+  <div id="allResults">
+    <h3>📊 전체 최신 결과</h3>
+    <div id="allResultsContent">아직 결과가 없습니다.</div>
+  </div>
+
+  <div class="footer">
+    <div></div>
+    <div style="color:var(--muted)">만든이: <a href="https://github.com/moondouble" style="text-decoration-line:none;color:var(--muted)" target="_blank">정마테</a></div>
+  </div>
+</div>
+
+<script>
+const fileInput = document.getElementById('fileInput');
+const addCardBtn = document.getElementById('addCardBtn');
+const fileList = document.getElementById('fileList');
+const runAllBtn = document.getElementById('runAllBtn');
+const rerunAllBtn = document.getElementById('rerunAllBtn');
+const themeBtn = document.getElementById('themeToggle');
+const fileCount = document.getElementById('fileCount');
+const allResultsContent = document.getElementById('allResultsContent');
+
+let fileData = [];
+let idCounter = 1;
+initTheme();
+updateFileCount();
+updateAllResults();
+
+function updateFileCount(){
+  fileCount.textContent = fileData.length ? `${fileData.length} 개의 카드` : '(카드 없음)';
+}
+
+fileInput.addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  for (const f of files) {
+    const text = await f.text();
+    const items = text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    const nameWithoutExt = f.name.replace(/\.[^/.]+$/, '');
+    const obj = createDataObj(nameWithoutExt, items);
+    addCardToDOM(obj, true);
+    fileData.push(obj);
+  }
+  updateAllResults();
+  updateFileCount();
+});
+
+addCardBtn.addEventListener('click', () => {
+  const obj = createDataObj(`새 카드 ${idCounter}`, []);
+  addCardToDOM(obj, false);
+  fileData.push(obj);
+  updateFileCount();
+  setTimeout(()=>{ obj.card.querySelector('.cardTitle').focus(); }, 60);
+});
+
+function createDataObj(name, items){
+  return {id:'card_'+(idCounter++),name,name,items:items.slice(),count:1,result:[],history:[],card:null};
+}
+
+function addCardToDOM(obj, fromFile){
+  const card = document.createElement('div'); card.className='card';
+  card.innerHTML=`
+  <div class="titleRow">
+    <input class="cardTitle" value="${escapeHtml(obj.name)}" />
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="removeBtn smallGhost" title="제거">🗑️</button>
+    </div>
+  </div>
+  <div class="meta">
+    <label>개수: <input type="number" class="countInput" min="1" value="${obj.count}"></label>
+    <div><button class="pickBtn">추첨</button></div>
+  </div>
+  <div class="slots" data-slots></div>
+  <textarea class="itemsArea" placeholder="항목을 한 줄씩 입력">${escapeHtml(obj.items.join('\n'))}</textarea>
+  <div class="result">—</div>
+  <div class="history">기록 없음</div>
+  `;
+  obj.card = card;
+  fileList.appendChild(card);
+
+  const titleInput = card.querySelector('.cardTitle');
+  const removeBtn = card.querySelector('.removeBtn');
+  const countInput = card.querySelector('.countInput');
+  const pickBtn = card.querySelector('.pickBtn');
+  const slotsWrap = card.querySelector('[data-slots]');
+  const itemsArea = card.querySelector('.itemsArea');
+
+  titleInput.addEventListener('input', ()=>{ obj.name = titleInput.value; updateAllResults(); });
+  removeBtn.addEventListener('click', ()=>{ fileList.removeChild(card); fileData = fileData.filter(x=>x!==obj); updateFileCount(); updateAllResults(); });
+  countInput.addEventListener('input', ()=>{ obj.count = parseInt(countInput.value)||1; });
+  itemsArea.addEventListener('input', ()=>{ obj.items = itemsArea.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean); });
+  pickBtn.addEventListener('click', ()=>{ runCard(obj); });
+}
+
+function escapeHtml(str){ return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* 🌟 핵심: 점점 느려지는 슬롯 + 마지막에 결과 표시 */
+function runCard(obj){
+  const slotsWrap = obj.card.querySelector('[data-slots]');
+  slotsWrap.innerHTML = '';
+  const selected = [];
+  const available = obj.items.slice();
+  let i=0;
+
+  function spinNext(){
+    if(i>=obj.count || !available.length){
+      // 모든 슬롯 애니메이션 끝난 후 결과 표시
+      obj.result = selected;
+      obj.history.unshift(selected.join(', '));
+      if(obj.history.length>5) obj.history.pop();
+      obj.card.querySelector('.result').textContent = selected.join(', ');
+      obj.card.querySelector('.history').textContent = obj.history.join('\n');
+      updateAllResults();
+      return;
+    }
+
+    const idx = Math.floor(Math.random()*available.length);
+    const val = available.splice(idx,1)[0];
+    selected.push(val);
+
+    const slot = document.createElement('div');
+    slot.className='slot anim';
+    slot.textContent='...';
+    slotsWrap.appendChild(slot);
+
+    function spinSlot(step=0, maxSteps=15, delay=30){
+      if(step>=maxSteps){
+        slot.textContent = val;
+        i++;
+        spinNext();
+        return;
+      }
+      slot.textContent = available.length ? available[Math.floor(Math.random()*available.length)] : val;
+      const nextDelay = delay + step*20;
+      setTimeout(()=>spinSlot(step+1, maxSteps, delay), nextDelay);
+    }
+
+    spinSlot();
+  }
+
+  spinNext();
+}
+
+function runAllCardsSequentially(){
+  let i=0;
+  function next(){
+    if(i>=fileData.length) return;
+    runCard(fileData[i++]);
+    setTimeout(next, 3000);
+  }
+  next();
+}
+
+runAllBtn.addEventListener('click', ()=>runAllCardsSequentially());
+<!-- rerunAllBtn.addEventListener('click', ()=>fileData.forEach(runCard)); -->
+
+function updateAllResults(){
+  if(!fileData.length){ allResultsContent.textContent = '아직 결과가 없습니다.'; return; }
+  allResultsContent.innerHTML = '';
+  fileData.forEach(obj=>{
+    const div = document.createElement('div');
+    div.textContent = `${obj.name}: ${obj.result.length ? obj.result.join(', ') : '—'}`;
+    allResultsContent.appendChild(div);
+  });
+}
+
+/* 테마 토글 */
+function initTheme(){
+  if(localStorage.theme==='light'){ document.body.classList.add('light'); } 
+  else { document.body.classList.remove('light'); }
+}
+themeBtn.addEventListener('click', ()=>{
+  document.body.classList.toggle('light');
+  localStorage.theme = document.body.classList.contains('light') ? 'light' : 'dark';
+});
+</script>
+</body>
+</html>
